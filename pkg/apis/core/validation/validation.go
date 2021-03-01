@@ -5382,26 +5382,24 @@ func ValidateResourceRequirements(requirements *core.ResourceRequirements, fldPa
 }
 
 // validateResourceQuotaScopes ensures that each enumerated hard resource constraint is valid for set of scopes
-func validateResourceQuotaScopes(newSpec, oldSpec *core.ResourceQuotaSpec, fld *field.Path) field.ErrorList {
-	allowCrossNSAffinityScope := utilfeature.DefaultFeatureGate.Enabled(features.PodAffinityNamespaceSelector) || hasCrossNamespacePodAffinityScope(oldSpec)
-
+func validateResourceQuotaScopes(resourceQuotaSpec *core.ResourceQuotaSpec, opts ResourceQuotaValidationOptions, fld *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if len(newSpec.Scopes) == 0 {
+	if len(resourceQuotaSpec.Scopes) == 0 {
 		return allErrs
 	}
 	hardLimits := sets.NewString()
-	for k := range newSpec.Hard {
+	for k := range resourceQuotaSpec.Hard {
 		hardLimits.Insert(string(k))
 	}
 	fldPath := fld.Child("scopes")
 	scopeSet := sets.NewString()
-	for _, scope := range newSpec.Scopes {
-		if !helper.IsStandardResourceQuotaScope(string(scope), allowCrossNSAffinityScope) {
-			allErrs = append(allErrs, field.Invalid(fldPath, newSpec.Scopes, "unsupported scope"))
+	for _, scope := range resourceQuotaSpec.Scopes {
+		if !helper.IsStandardResourceQuotaScope(string(scope), opts.AllowPodAffinityNamespaceSelector) {
+			allErrs = append(allErrs, field.Invalid(fldPath, resourceQuotaSpec.Scopes, "unsupported scope"))
 		}
 		for _, k := range hardLimits.List() {
 			if helper.IsStandardQuotaResourceName(k) && !helper.IsResourceQuotaScopeValidForResource(scope, k) {
-				allErrs = append(allErrs, field.Invalid(fldPath, newSpec.Scopes, "unsupported scope applied to resource"))
+				allErrs = append(allErrs, field.Invalid(fldPath, resourceQuotaSpec.Scopes, "unsupported scope applied to resource"))
 			}
 		}
 		scopeSet.Insert(string(scope))
@@ -5412,30 +5410,28 @@ func validateResourceQuotaScopes(newSpec, oldSpec *core.ResourceQuotaSpec, fld *
 	}
 	for _, invalidScopePair := range invalidScopePairs {
 		if scopeSet.HasAll(invalidScopePair.List()...) {
-			allErrs = append(allErrs, field.Invalid(fldPath, newSpec.Scopes, "conflicting scopes"))
+			allErrs = append(allErrs, field.Invalid(fldPath, resourceQuotaSpec.Scopes, "conflicting scopes"))
 		}
 	}
 	return allErrs
 }
 
 // validateScopedResourceSelectorRequirement tests that the match expressions has valid data
-func validateScopedResourceSelectorRequirement(newSpec, oldSpec *core.ResourceQuotaSpec, fld *field.Path) field.ErrorList {
-	allowCrossNSAffinityScope := utilfeature.DefaultFeatureGate.Enabled(features.PodAffinityNamespaceSelector) || hasCrossNamespacePodAffinityScopeSelector(oldSpec)
-
+func validateScopedResourceSelectorRequirement(resourceQuotaSpec *core.ResourceQuotaSpec, opts ResourceQuotaValidationOptions, fld *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	hardLimits := sets.NewString()
-	for k := range newSpec.Hard {
+	for k := range resourceQuotaSpec.Hard {
 		hardLimits.Insert(string(k))
 	}
 	fldPath := fld.Child("matchExpressions")
 	scopeSet := sets.NewString()
-	for _, req := range newSpec.ScopeSelector.MatchExpressions {
-		if !helper.IsStandardResourceQuotaScope(string(req.ScopeName), allowCrossNSAffinityScope) {
+	for _, req := range resourceQuotaSpec.ScopeSelector.MatchExpressions {
+		if !helper.IsStandardResourceQuotaScope(string(req.ScopeName), opts.AllowPodAffinityNamespaceSelector) {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("scopeName"), req.ScopeName, "unsupported scope"))
 		}
 		for _, k := range hardLimits.List() {
 			if helper.IsStandardQuotaResourceName(k) && !helper.IsResourceQuotaScopeValidForResource(req.ScopeName, k) {
-				allErrs = append(allErrs, field.Invalid(fldPath, newSpec.ScopeSelector, "unsupported scope applied to resource"))
+				allErrs = append(allErrs, field.Invalid(fldPath, resourceQuotaSpec.ScopeSelector, "unsupported scope applied to resource"))
 			}
 		}
 		switch req.ScopeName {
@@ -5468,7 +5464,7 @@ func validateScopedResourceSelectorRequirement(newSpec, oldSpec *core.ResourceQu
 	}
 	for _, invalidScopePair := range invalidScopePairs {
 		if scopeSet.HasAll(invalidScopePair.List()...) {
-			allErrs = append(allErrs, field.Invalid(fldPath, newSpec.Scopes, "conflicting scopes"))
+			allErrs = append(allErrs, field.Invalid(fldPath, resourceQuotaSpec.Scopes, "conflicting scopes"))
 		}
 	}
 
@@ -5476,20 +5472,26 @@ func validateScopedResourceSelectorRequirement(newSpec, oldSpec *core.ResourceQu
 }
 
 // validateScopeSelector tests that the specified scope selector has valid data
-func validateScopeSelector(newSpec, oldSpec *core.ResourceQuotaSpec, fld *field.Path) field.ErrorList {
+func validateScopeSelector(resourceQuotaSpec *core.ResourceQuotaSpec, opts ResourceQuotaValidationOptions, fld *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if newSpec.ScopeSelector == nil {
+	if resourceQuotaSpec.ScopeSelector == nil {
 		return allErrs
 	}
-	allErrs = append(allErrs, validateScopedResourceSelectorRequirement(newSpec, oldSpec, fld.Child("scopeSelector"))...)
+	allErrs = append(allErrs, validateScopedResourceSelectorRequirement(resourceQuotaSpec, opts, fld.Child("scopeSelector"))...)
 	return allErrs
 }
 
+// ResourceQuotaValidationOptions contains the different settings for ResourceQuota validation
+type ResourceQuotaValidationOptions struct {
+	// Allow pod-affinity namespace selector validation.
+	AllowPodAffinityNamespaceSelector bool
+}
+
 // ValidateResourceQuota tests if required fields in the ResourceQuota are set.
-func ValidateResourceQuota(resourceQuota *core.ResourceQuota) field.ErrorList {
+func ValidateResourceQuota(resourceQuota *core.ResourceQuota, opts ResourceQuotaValidationOptions) field.ErrorList {
 	allErrs := ValidateObjectMeta(&resourceQuota.ObjectMeta, true, ValidateResourceQuotaName, field.NewPath("metadata"))
 
-	allErrs = append(allErrs, ValidateResourceQuotaSpec(&resourceQuota.Spec, nil, field.NewPath("spec"))...)
+	allErrs = append(allErrs, ValidateResourceQuotaSpec(&resourceQuota.Spec, opts, field.NewPath("spec"))...)
 	allErrs = append(allErrs, ValidateResourceQuotaStatus(&resourceQuota.Status, field.NewPath("status"))...)
 
 	return allErrs
@@ -5514,42 +5516,18 @@ func ValidateResourceQuotaStatus(status *core.ResourceQuotaStatus, fld *field.Pa
 	return allErrs
 }
 
-func hasCrossNamespacePodAffinityScope(spec *core.ResourceQuotaSpec) bool {
-	if spec == nil {
-		return false
-	}
-	for _, scope := range spec.Scopes {
-		if scope == core.ResourceQuotaScopeCrossNamespacePodAffinity {
-			return true
-		}
-	}
-	return false
-}
-
-func hasCrossNamespacePodAffinityScopeSelector(spec *core.ResourceQuotaSpec) bool {
-	if spec == nil {
-		return false
-	}
-	for _, req := range spec.ScopeSelector.MatchExpressions {
-		if req.ScopeName == core.ResourceQuotaScopeCrossNamespacePodAffinity {
-			return true
-		}
-	}
-	return false
-}
-
-func ValidateResourceQuotaSpec(newSpec, oldSpec *core.ResourceQuotaSpec, fld *field.Path) field.ErrorList {
+func ValidateResourceQuotaSpec(resourceQuotaSpec *core.ResourceQuotaSpec, opts ResourceQuotaValidationOptions, fld *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	fldPath := fld.Child("hard")
-	for k, v := range newSpec.Hard {
+	for k, v := range resourceQuotaSpec.Hard {
 		resPath := fldPath.Key(string(k))
 		allErrs = append(allErrs, ValidateResourceQuotaResourceName(string(k), resPath)...)
 		allErrs = append(allErrs, ValidateResourceQuantityValue(string(k), v, resPath)...)
 	}
 
-	allErrs = append(allErrs, validateResourceQuotaScopes(newSpec, oldSpec, fld)...)
-	allErrs = append(allErrs, validateScopeSelector(newSpec, oldSpec, fld)...)
+	allErrs = append(allErrs, validateResourceQuotaScopes(resourceQuotaSpec, opts, fld)...)
+	allErrs = append(allErrs, validateScopeSelector(resourceQuotaSpec, opts, fld)...)
 
 	return allErrs
 }
@@ -5568,9 +5546,9 @@ func ValidateResourceQuantityValue(resource string, value resource.Quantity, fld
 
 // ValidateResourceQuotaUpdate tests to see if the update is legal for an end user to make.
 // newResourceQuota is updated with fields that cannot be changed.
-func ValidateResourceQuotaUpdate(newResourceQuota, oldResourceQuota *core.ResourceQuota) field.ErrorList {
+func ValidateResourceQuotaUpdate(newResourceQuota, oldResourceQuota *core.ResourceQuota, opts ResourceQuotaValidationOptions) field.ErrorList {
 	allErrs := ValidateObjectMetaUpdate(&newResourceQuota.ObjectMeta, &oldResourceQuota.ObjectMeta, field.NewPath("metadata"))
-	allErrs = append(allErrs, ValidateResourceQuotaSpec(&newResourceQuota.Spec, &oldResourceQuota.Spec, field.NewPath("spec"))...)
+	allErrs = append(allErrs, ValidateResourceQuotaSpec(&newResourceQuota.Spec, opts, field.NewPath("spec"))...)
 
 	// ensure scopes cannot change, and that resources are still valid for scope
 	fldPath := field.NewPath("spec", "scopes")

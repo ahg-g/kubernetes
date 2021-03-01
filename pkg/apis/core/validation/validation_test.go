@@ -4479,7 +4479,7 @@ func TestValidateResourceQuotaWithAlphaLocalStorageCapacityIsolation(t *testing.
 		Spec: spec,
 	}
 
-	if errs := ValidateResourceQuota(resourceQuota); len(errs) != 0 {
+	if errs := ValidateResourceQuota(resourceQuota, ResourceQuotaValidationOptions{}); len(errs) != 0 {
 		t.Errorf("expected success: %v", errs)
 	}
 }
@@ -14416,63 +14416,12 @@ func TestValidateResourceQuota(t *testing.T) {
 	}
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodAffinityNamespaceSelector, !tc.disableNamespaceSelector)()
-			errs := ValidateResourceQuota(&tc.rq)
+			errs := ValidateResourceQuota(&tc.rq, ResourceQuotaValidationOptions{
+				AllowPodAffinityNamespaceSelector: !tc.disableNamespaceSelector,
+			})
 			if len(tc.errDetail) == 0 && len(tc.errField) == 0 && len(errs) != 0 {
 				t.Errorf("expected success: %v", errs)
 			} else if (len(tc.errDetail) != 0 || len(tc.errField) != 0) && len(errs) == 0 {
-				t.Errorf("expected failure")
-			} else {
-				for i := range errs {
-					if !strings.Contains(errs[i].Detail, tc.errDetail) {
-						t.Errorf("expected error detail either empty or %s, got %s", tc.errDetail, errs[i].Detail)
-					}
-				}
-			}
-		})
-	}
-
-	// Validate CrossNamespacePodAffinity update scenarios.
-	for name, tc := range map[string]struct {
-		new                      core.ResourceQuotaSpec
-		old                      core.ResourceQuotaSpec
-		errDetail                string
-		disableNamespaceSelector bool
-	}{
-		"create-feature-enabled": {
-			new: crossNamespaceAffinitySpec,
-		},
-		"create-feature-disabled": {
-			new:                      crossNamespaceAffinitySpec,
-			errDetail:                "unsupported scope",
-			disableNamespaceSelector: true,
-		},
-		"update-old-doesn't-include-scope-feature-enabled": {
-			new: crossNamespaceAffinitySpec,
-			old: spec,
-		},
-		"update-old-doesn't-include-scope-feature-disabled": {
-			new:                      crossNamespaceAffinitySpec,
-			old:                      spec,
-			errDetail:                "unsupported scope",
-			disableNamespaceSelector: true,
-		},
-		"update-old-includes-scope-feature-disabled": {
-			new:                      crossNamespaceAffinitySpec,
-			old:                      crossNamespaceAffinitySpec,
-			disableNamespaceSelector: true,
-		},
-		"update-old-includes-scope-feature-enabled": {
-			new: crossNamespaceAffinitySpec,
-			old: crossNamespaceAffinitySpec,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodAffinityNamespaceSelector, !tc.disableNamespaceSelector)()
-			errs := ValidateResourceQuotaSpec(&tc.new, &tc.old, field.NewPath("spec"))
-			if len(tc.errDetail) == 0 && len(errs) != 0 {
-				t.Errorf("expected success: %v", errs)
-			} else if len(tc.errDetail) != 0 && len(errs) == 0 {
 				t.Errorf("expected failure")
 			} else {
 				for i := range errs {
