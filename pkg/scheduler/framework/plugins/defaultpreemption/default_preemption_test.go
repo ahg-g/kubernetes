@@ -991,7 +991,8 @@ func TestDryRunPreemption(t *testing.T) {
 				st.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			)
 			registeredPlugins = append(registeredPlugins, tt.registerPlugins...)
-			informerFactory := informers.NewSharedInformerFactory(clientsetfake.NewSimpleClientset(), 0)
+			objs := []runtime.Object{&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ""}}}
+			informerFactory := informers.NewSharedInformerFactory(clientsetfake.NewSimpleClientset(objs...), 0)
 			fwk, err := st.NewFramework(
 				registeredPlugins,
 				frameworkruntime.WithPodNominator(internalqueue.NewPodNominator()),
@@ -1001,6 +1002,11 @@ func TestDryRunPreemption(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			informerFactory.Start(ctx.Done())
+			informerFactory.WaitForCacheSync(ctx.Done())
 
 			nodeInfos, err := snapshot.NodeInfos().List()
 			if err != nil {
